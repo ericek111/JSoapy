@@ -4,7 +4,6 @@ import java.lang.foreign.AddressLayout;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.LongBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -28,19 +27,18 @@ public class SoapySDRStream implements AutoCloseable {
 	/** Buffer containing all data -- numChannels * sizeof(sample) in size. */
 	protected MemorySegment mem_block = null;
 	protected MemorySegment mem_block_ptrs = null;
+	protected MemorySegment mem_direct_ptrs = null;
 	
 	protected final Arena paramArena = Arena.ofAuto();
 	protected MemorySegment mem_flags = paramArena.allocate(ValueLayout.JAVA_INT);
 	protected MemorySegment mem_timeNs = paramArena.allocate(ValueLayout.JAVA_LONG);
 	protected MemorySegment mem_handle = paramArena.allocate(ValueLayout.ADDRESS);
-	// ideally there would be only one direction per stream (I think), but what if...
-	protected MemorySegment mem_directBufs;
-	protected MemorySegment mem_readBufs;
-	protected MemorySegment mem_writeBufs;
+	protected int lastBlockNumElems = 0;
+	protected int lastDirectNumElems = 0;
+	protected boolean isHoldingAnAcquiredBuffer = false;
 	
-	protected LongBuffer buf_directBufs;
-	protected LongBuffer buf_readBufs;
-	protected LongBuffer buf_writeBufs;
+	protected MemorySegment mem_directAccessBufs;
+	protected long currentDirectAccessHandle = -1;
 	
 	protected SoapySDRStream(
 		SoapySDRDevice dev,
@@ -63,20 +61,19 @@ public class SoapySDRStream implements AutoCloseable {
 		
 		this.numChannels = channels != null ? channels.length : this.dev.getNumChannels(direction);
 		this.args = args;
-		this.mem_directBufs = paramArena.allocate(ValueLayout.ADDRESS, numChannels);
-		this.mem_readBufs = paramArena.allocate(ValueLayout.ADDRESS, numChannels);
-		this.mem_writeBufs = paramArena.allocate(ValueLayout.ADDRESS, numChannels);
+		this.mem_directAccessBufs = paramArena.allocate(ValueLayout.ADDRESS, numChannels);
 		
-		// TODO: We're using LongBuffers here -- that won't work on 32-bit machines.
-		this.buf_directBufs = this.mem_directBufs.asReadOnly().asByteBuffer().asLongBuffer();
-		this.buf_readBufs = this.mem_readBufs.asReadOnly().asByteBuffer().asLongBuffer();
-		this.buf_writeBufs = this.mem_writeBufs.asReadOnly().asByteBuffer().asLongBuffer();
+		this.mem_block_ptrs = paramArena.allocate(this.numChannels * ValueLayout.ADDRESS.byteSize());
+		this.mem_direct_ptrs = paramArena.allocate(this.numChannels * ValueLayout.ADDRESS.byteSize());
 		
 		if (ptr == null) {
 			MemorySegment channelsPtr = null;
 			if (channels != null) {
-				// TODO: Same here, won't work on 32-bit machines (half of the pointers will be empty)
-				channelsPtr = paramArena.allocateFrom(ValueLayout.JAVA_LONG, channels);
+				// Using ADDRESS here, because the channels argument is size_t. We're not actually filling it with real pointers, only numbers (0 .. numChannels).
+				channelsPtr = paramArena.allocate(ValueLayout.ADDRESS, channels.length);
+				for (int i = 0; i < channels.length; i++) {
+					channelsPtr.setAtIndex(ValueLayout.ADDRESS, i, MemorySegment.ofAddress(channels[0])); 
+				}
 			}
 			
 			ptr = Device_h.SoapySDRDevice_setupStream(
@@ -148,15 +145,6 @@ public class SoapySDRStream implements AutoCloseable {
 	}
 	
 	/**
-	 * Used for {@link #readStream} and {@link #writeStream}.
-	 * @return The array of void* buffers numChannels in size, containing data either received, or ready to be transmitted.
-	 */
-	public MemorySegment getData(long channel) {
-		long chs = this.format.byteSize() * this.blockSize;
-		return this.mem_block.asSlice(chs * channel, chs);
-	}
-	
-	/**
 	 * Set the input buffer size (for the {@link #readStream} method) in samples.
 	 * The resulting buffer will be sizeof(sample format) * numChannels * blockSize B long. 
 	 * @param blockSize
@@ -172,9 +160,6 @@ public class SoapySDRStream implements AutoCloseable {
 		}
 		
 		blockArena = Arena.ofShared();
-		if (this.mem_block_ptrs == null) {
-			this.mem_block_ptrs = paramArena.allocate(this.numChannels * ValueLayout.ADDRESS.byteSize());
-		}
 		
 		this.mem_block = blockArena.allocate(this.format.byteSize() * this.blockSize * this.numChannels);
 		for (long i = 0; i < numChannels; i++) {
@@ -189,10 +174,9 @@ public class SoapySDRStream implements AutoCloseable {
 	public long lastTimeNs() {
 		return this.mem_timeNs.get(ValueLayout.JAVA_LONG, 0);
 	}
-
-	public LongBuffer getDirectBufs() {
-		// this.mem_directBufs.asSlice(0, ValueLayout.ADDRESS).asReadOnly();
-		return this.buf_directBufs;
+	
+	public int lastHandle() {
+		return this.mem_handle.getAtIndex(ValueLayout.JAVA_INT, 0);
 	}
 	
 	public int closeStream() {
@@ -225,12 +209,20 @@ public class SoapySDRStream implements AutoCloseable {
 	}
 	
 	public int readStream(long timeoutUs) {
-		return Device_h.SoapySDRDevice_readStream(this.dev.getAddress(), ptr, mem_block_ptrs, this.blockSize, mem_flags, mem_timeNs, timeoutUs);
+		assert this.direction == SoapySDRDeviceDirection.RX;
+		
+		int numElems = Device_h.SoapySDRDevice_readStream(this.dev.getAddress(), ptr, mem_block_ptrs, this.blockSize, mem_flags, mem_timeNs, timeoutUs);
+		this.lastBlockNumElems = numElems;
+		return numElems;
 	}
 	
 	public int writeStream(int flags, long timeNs, long timeoutUs) {
+		assert this.direction == SoapySDRDeviceDirection.TX;
+		
 		this.mem_flags.set(ValueLayout.JAVA_INT, 0, flags);
-		return Device_h.SoapySDRDevice_writeStream(this.dev.getAddress(), ptr, mem_block_ptrs, this.blockSize, mem_flags, timeNs, timeoutUs);
+		int numElems =  Device_h.SoapySDRDevice_writeStream(this.dev.getAddress(), ptr, mem_block_ptrs, this.blockSize, mem_flags, timeNs, timeoutUs);
+		this.lastBlockNumElems = numElems;
+		return numElems;
 	}
 	
 	// Not tested. Only LimeSuite seems to support it?
@@ -247,105 +239,73 @@ public class SoapySDRStream implements AutoCloseable {
 		return Device_h.SoapySDRDevice_getNumDirectAccessBuffers(this.dev.getAddress(), ptr);
 	}
 	
+	public MemorySegment getDirectAccessBuffer(long handle, long channel) {
+		if (handle != currentDirectAccessHandle) {
+			int err = Device_h.SoapySDRDevice_getDirectAccessBufferAddrs(this.dev.getAddress(), ptr, handle, mem_directAccessBufs);
+			if (err != 0) {
+				return null;
+			}
+			currentDirectAccessHandle = handle;
+		}
+		
+		return this.mem_directAccessBufs.getAtIndex(ValueLayout.ADDRESS, channel);
+	}
+	
+	public MemorySegment getDirectBuffer(long channel) {
+		assert isHoldingAnAcquiredBuffer == true;
+		return this.mem_direct_ptrs.getAtIndex(ValueLayout.ADDRESS, channel).reinterpret(this.lastDirectNumElems * getNativeFormat(channel).format().byteSize());
+	}
+	
 	/**
-	 * 
-	 * @param handle
-	 * @param list Supply an empty ArrayList into which the addresses will be returned.
-	 * @return
+	 * Used for {@link #readStream} and {@link #writeStream}.
+	 * @return The array of void* buffers numChannels in size, containing data either received, or ready to be transmitted.
 	 */
-	public int getDirectAccessBufferAddrs(long handle) {			
-		int ret = Device_h.SoapySDRDevice_getDirectAccessBufferAddrs(this.dev.getAddress(), ptr, handle, mem_directBufs);
-		/* buffs.ensureCapacity(this.numChannels);
-		for (int i = 0; i < this.numChannels; i++) {
-			buffs.set(i, MemorySegment.ofAddress(mem_directBufs.getAtIndex(AddressLayout.JAVA_LONG, i)));
-		} */
-		return ret;
+	public MemorySegment getNormalBuffer(long channel) {
+		return this.mem_block.asSlice(this.format.byteSize() * this.blockSize * channel, this.format.byteSize() * this.lastBlockNumElems);
 	}
 	
-	public StreamReadBuffer acquireReadBuffer(long timeoutUs) {
-		int numElems = Device_h.SoapySDRDevice_acquireReadBuffer(dev.getAddress(), ptr, mem_handle, mem_readBufs, mem_flags, mem_timeNs, timeoutUs);
-		var buf = new StreamReadBuffer(numElems);
-		return buf;
+	public int acquireReadBuffer(long timeoutUs) {
+		assert this.direction == SoapySDRDeviceDirection.RX;
+		assert isHoldingAnAcquiredBuffer == false;
+		
+		int numElems = Device_h.SoapySDRDevice_acquireReadBuffer(dev.getAddress(), ptr, mem_handle, mem_direct_ptrs, mem_flags, mem_timeNs, timeoutUs);
+		this.lastDirectNumElems = numElems;
+		isHoldingAnAcquiredBuffer = true;
+		return numElems;
 	}
 	
-	public StreamWriteBuffer acquireWriteBuffer(long timeoutUs) {
-		int numElems = Device_h.SoapySDRDevice_acquireWriteBuffer(this.dev.getAddress(), ptr, mem_handle, mem_writeBufs, timeoutUs);
-		var buf = new StreamWriteBuffer(numElems);
-		return buf;
+	/**
+	 * Does not presently support out-of-order releases or acquiring a buffer without releasing the previous one. If you need it, open an issue.
+	 * It could be done by expanding the ptr array buffer to getNumDirectAccessBuffers * numChannels and slicing it by handles.
+	 * It'd probably be a good idea to have an ArrayList of objects containing the addresses and handles (see this class in the initial commit).
+	 */
+	public void releaseReadBuffer() {
+		assert this.direction == SoapySDRDeviceDirection.RX;
+		assert isHoldingAnAcquiredBuffer == true;
 		
+		Device_h.SoapySDRDevice_releaseReadBuffer(dev.getAddress(), ptr, this.lastHandle());
+		isHoldingAnAcquiredBuffer = false;
 	}
 	
-	protected abstract class StreamBuffer implements AutoCloseable {
-		final protected long handle;
-		final protected long numElems;
+	public int acquireWriteBuffer(long timeoutUs) {
+		assert this.direction == SoapySDRDeviceDirection.TX;
+		assert isHoldingAnAcquiredBuffer == false;
 		
-		protected StreamBuffer(long numElems) {
-			this.handle = mem_handle.getAtIndex(ValueLayout.JAVA_INT, 0);
-			this.numElems = numElems;
-		}
-		
-		public long getNumChannels() {
-			return numChannels;
-		}
-		
-		public long getNumElems() {
-			return this.numElems;
-		}
-		
-		public SoapySDRStream getStream() {
-			return SoapySDRStream.this;
-		}
-		
-		protected abstract MemorySegment getBuffers();
-		
-		public MemorySegment getBuffer(long channel) {
-			return this.getBuffers().getAtIndex(ValueLayout.ADDRESS, channel).reinterpret(this.numElems * getNativeFormat(channel).format().byteSize());
-		}
-		
-		@Override
-		public void close() {
-			this.release();
-		}
-		
-		public abstract void release();
+		int numElems = Device_h.SoapySDRDevice_acquireWriteBuffer(this.dev.getAddress(), ptr, mem_handle, mem_direct_ptrs, timeoutUs);
+		this.lastDirectNumElems = numElems;
+		isHoldingAnAcquiredBuffer = true;
+		return numElems;
 	}
 	
-	public class StreamReadBuffer extends StreamBuffer {
-		protected StreamReadBuffer(long numElems) {
-			super(numElems);
-		}
-
-		@Override
-		public void release() {
-			Device_h.SoapySDRDevice_releaseReadBuffer(dev.getAddress(), ptr, handle);
-		}
-
-		@Override
-		protected MemorySegment getBuffers() {
-			return mem_readBufs;
-		}
+	/**
+	 * Does not presently support out-of-order releases. If you need it, open an issue.
+	 */
+	public void releaseWriteBuffer(long numElems, int flags, long timeNs) {
+		assert this.direction == SoapySDRDeviceDirection.TX;
+		assert isHoldingAnAcquiredBuffer == true;
 		
-	}
-	
-	public class StreamWriteBuffer extends StreamBuffer {
-		protected StreamWriteBuffer(long numElems) {
-			super(numElems);
-		}
-		
-		public void release(long numElems, int flags, long timeNs) {
-			// this.stream.mem_flags.set(ValueLayout.JAVA_INT, 0, flags);
-			Device_h.SoapySDRDevice_releaseWriteBuffer(dev.getAddress(), ptr, handle, numElems, mem_flags, timeNs);
-		}
-		
-		@Override
-		public void release() {
-			release(getBlockSize(), 0, 0);
-		}
-
-		@Override
-		protected MemorySegment getBuffers() {
-			return mem_writeBufs;
-		}
+		Device_h.SoapySDRDevice_releaseWriteBuffer(dev.getAddress(), ptr, this.lastHandle(), numElems, mem_flags, timeNs);
+		isHoldingAnAcquiredBuffer = false;
 	}
 	
 }

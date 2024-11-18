@@ -57,9 +57,9 @@ public class SoapyRxFft extends JFrame {
         JLabel offsetLabel = new JLabel("Offset: ");
         JSlider zoomSlider = new JSlider(JSlider.HORIZONTAL, 0, 1000, 1000);
         JLabel zoomLabel = new JLabel("Zoom: ");
-        JSlider minSlider = new JSlider(JSlider.HORIZONTAL, -160, -10, -90);
+        JSlider minSlider = new JSlider(JSlider.HORIZONTAL, -160, 0, -110);
         JLabel minLabel = new JLabel("Min: ");
-        JSlider maxSlider = new JSlider(JSlider.HORIZONTAL, -150, 0, -60);
+        JSlider maxSlider = new JSlider(JSlider.HORIZONTAL, -150, 10, -60);
         JLabel maxLabel = new JLabel("Max: ");
         waterfall.setMinValue(minSlider.getValue());
         waterfall.setMaxValue(maxSlider.getValue());
@@ -141,67 +141,59 @@ public class SoapyRxFft extends JFrame {
     		device.setFrequency(SoapySDRDeviceDirection.RX, 0, 100_000_000.0);
 			System.out.println(device.getSampleRate(SoapySDRDeviceDirection.RX, 0));
 			SoapySDRStream stream = device.setupStream(SoapySDRDeviceDirection.RX, StreamFormat.CF32, null, null);
-			System.out.println(stream);
-			System.out.println("Block size: " + stream.getBlockSize());
+			System.out.println("Block size: " + stream.getBlockSize() + ", native sample size: " + stream.getNativeFormat(0).format().byteSize() + ", stream sample size: " + stream.getFormat().byteSize());
 			stream.activateStream();
-			
-			MemorySegment convFunction = Converters_h.SoapySDRConverter_getFunction(stream.getNativeFormat(0).format().addr(), StreamFormat.CF32.addr());
-			
-			
+			boolean DMA = true;
+			MemorySegment convFunction = Converters_h.SoapySDRConverter_getFunction((DMA ? stream.getNativeFormat(0).format() : stream.getFormat()).addr(), StreamFormat.CF32.addr());
 			
 			long t1 = System.nanoTime();
 			long totalFetched = 0;
-			long fftInPos = 0; // bytes
+			long fftInPos = 0; // samples
 			long totalBatches = 0;
+			int linesRolled = 0;
+			
+			int streamSampleSize = (DMA ? stream.getNativeFormat(0).format().byteSize() : stream.getFormat().byteSize());
 
 			while (true) {
-				// int readElems = stream.readStream(100000);
-				var readBuf = stream.acquireReadBuffer(100000);
-				int readElems = (int) readBuf.getNumElems();
-				
+				int readElems = DMA ? stream.acquireReadBuffer(1000000) : stream.readStream(1000000);
 				if (readElems < 0) {
-					readBuf.release();
 					System.out.println("Error reading: " + Errors_h.fromCode(readElems).name());
 					continue;
 				}
+
+				MemorySegment inSamples = DMA ? stream.getDirectBuffer(0) : stream.getNormalBuffer(0);
+				long inSamplesOffset = 0;
 				
-				MemorySegment inSamples = readBuf.getBuffer(0);
-				// MemorySegment inSamples = stream.getData(0);
-				ByteBuffer rawBuf = inSamples.asByteBuffer();
-				
+				// System.out.println(readElems + " / " + (inSamples.byteSize() / streamSampleSize) + " / " + totalFetched + " @ " + inSamples.address());
 				totalFetched += inSamples.byteSize();
 				totalBatches++;
-				
-				// System.out.println(readElems + " / " + inSamples.byteSize() + " / " + totalFetched + " @ " + inSamples.address());
-				
-				
+
 				if (System.nanoTime() - t1 > 1000000000) {
 					t1 = System.nanoTime();
-					System.out.println("Rate: " + totalFetched + " B / s in " + totalBatches + " packets");
+					System.out.println("Rate: " + totalFetched + " B / s in " + totalBatches + " packets, lines: " + linesRolled);
 					totalFetched = 0;
 					totalBatches = 0;
+					linesRolled = 0;
 				}
 				
-				int fftSize = (int) fftGen.getSize();
-				while (rawBuf.hasRemaining()) {
-					long shouldCopy = Math.max(0, Math.min(fftSize * Float.BYTES * 2 - fftInPos, rawBuf.limit() - rawBuf.position()));
-					// System.out.println(inSamples.get(ValueLayout.JAVA_SHORT, 0));
-					// Converters.convert(stream.getNativeFormat(0).format(), StreamFormat.CF32, MemorySegment.ofAddress(inSamples.address() + rawBuf.position()), fftGen.fft_in.asSlice(fftInPos), (int) (shouldCopy / StreamFormat.CF32.byteSize()), 1.0);
-					// SoapySDRConverterFunction.invoke(convFunction, MemorySegment.ofAddress(inSamples.address() + rawBuf.position()), fftGen.fft_in.asSlice(fftInPos), (int) (shouldCopy / StreamFormat.CF32.byteSize()), 1.0);
-					SoapySDRConverterFunction.invokeLongs(convFunction, inSamples.address() + rawBuf.position(), fftGen.fft_in.address() + fftInPos, (int) (shouldCopy / StreamFormat.CF32.byteSize()), 1.0);
-					// MemorySegment.copy(inSamples, (long) rawBuf.position(), fftGen.fft_in, fftInPos, (int) shouldCopy);
-					fftInPos += shouldCopy;
-					rawBuf.position((int) (rawBuf.position() + shouldCopy));
-					// System.out.println(shouldCopy + " / " + rawBuf.position() + " pos: " + fftInPos + " max: " + fftGen.getNativeBufferSize());
+				int fftSize = (int) fftGen.getSize(); // samples
+				while (inSamplesOffset < inSamples.byteSize()) {
+					long leftSamplesInBuf = (inSamples.byteSize() - inSamplesOffset) / streamSampleSize;
+					long shouldCopySamples = Math.max(0, Math.min(fftSize - fftInPos, leftSamplesInBuf));
+					SoapySDRConverterFunction.invokeLongs(convFunction, inSamples.address() + inSamplesOffset, fftGen.fft_in.address() + fftInPos * Float.BYTES * 2, shouldCopySamples, 1.0);
+					fftInPos += shouldCopySamples;
+					inSamplesOffset += shouldCopySamples * streamSampleSize;
 
-					if (fftInPos >= fftSize * Float.BYTES * 2) { // we have filled the input buffer            				
+					if (fftInPos >= fftSize) { // we have filled the FFT input buffer            				
 						fftInPos = 0;
 						fftGen.execute();
 						
 						frame.getWaterfall().addLine(fftGen);
+						linesRolled++;
 					}
 				}
-				readBuf.release();
+				if (DMA)
+					stream.releaseReadBuffer();
 			}
 
     	});

@@ -50,10 +50,6 @@ public class Converters {
 		SoapySDRConverterFunction.invoke(convFunction, inBuf, outBuf, numElems, optScaler);
 	}
 	
-	public static void convertBuffer(SoapySDRStream.StreamReadBuffer readBuf, long channel, StreamFormat outFormat, MemorySegment outBuf, double optScaler) {
-		convert(readBuf.getStream().getNativeFormat(channel).format(), outFormat, readBuf.getBuffer(channel), outBuf, readBuf.getNumElems(), optScaler);
-	}
-	
 	public static class NoSuchConversionException extends UnsupportedOperationException {
 
 		private static final long serialVersionUID = -3755587097171197604L;
