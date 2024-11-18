@@ -1,6 +1,5 @@
 package eu.lixko.jsoapy.gui;
 
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.image.BufferedImage;
@@ -20,7 +19,9 @@ import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
 public class WaterfallPanel extends JPanel {
-    private BufferedImage waterfallImage; // BufferedImage to hold the waterfall data
+    private static final long serialVersionUID = 7474511002119759534L;
+    
+	private BufferedImage waterfallImage; // BufferedImage to hold the waterfall data
     private final int WATERFALL_RESOLUTION = 1000000;
     private int[] palette = new int[WATERFALL_RESOLUTION];
     
@@ -28,7 +29,6 @@ public class WaterfallPanel extends JPanel {
     private float waterfallMax = 1.0f;
     private float fftData[][];
     private int fftSizes[];
-    private float simdFftBuf[];
     private int currentLine = 0;
     private Thread zoomWorker;
     protected final AtomicBoolean zoomWorkAvailable = new AtomicBoolean(false);
@@ -37,7 +37,6 @@ public class WaterfallPanel extends JPanel {
     protected double offsetFactor = 0.0;
     protected double viewBandwidth = 0.0; // actual bandwidth displayed
 	protected double viewZoom; // linearized representation of the current zoom (e. g. percentage on a slider)
-    // protected double wholeBandwidth = 
 	private double zoomFactor;
     
     public WaterfallPanel(int width, int height) {
@@ -96,17 +95,13 @@ public class WaterfallPanel extends JPanel {
     	int[] imageData = ((DataBufferInt) rasterBuf).getData();
 
     	// raster.setPixels(0, 0, raster.getWidth(), raster.getHeight() - 1, raster.getPixels(0, 1, raster.getWidth(), raster.getHeight() - 1, (int[]) null));
-    	// int curIdx = 0;
     	
-    	int yIdx = 0;
     	if (false) {
     		// scroll upwards: 
         	System.arraycopy(imageData, raster.getWidth(), imageData, 0, raster.getWidth() * (raster.getHeight() - 1));
-        	yIdx = raster.getWidth() * (raster.getHeight() - 1);    		
     	} else {
     		// scroll downwards
         	System.arraycopy(imageData, 0, imageData, raster.getWidth(), raster.getWidth() * (raster.getHeight() - 1));
-        	yIdx = 0;
     	}
     	
     	final int fftSize = (int) fftGen.getSize();
@@ -126,36 +121,17 @@ public class WaterfallPanel extends JPanel {
     	float dataRange = waterfallMax - waterfallMin;
     	    	
     	int waterfallWidth = waterfallImage.getWidth();
-    	int xIdx = 0;
     	int yIdx = waterfallImage.getWidth() * yPos;
     	if (waterfallWidth == 0)
     		return;
     	
     	float[] fftLineBuf = this.fftData[fftIdx];
     	int fftSize = fftSizes[fftIdx]; // fftLineBuf.length;
-    	double binsPerPx = ((double) fftSize / waterfallWidth);
     	
     	int drawDataSize = (int) (fftSize * zoomFactor);
     	int drawDataStart = (int) (((double) fftSize / 2.0) * (offsetFactor + 1) - (drawDataSize / 2));
     	
     	final VectorSpecies<Float> species = FloatVector.SPECIES_PREFERRED;
-    	if (binsPerPx >= species.length() && false) {
-    		int b = 0;
-    		int step = species.length();
-    		final int decim = 32;
-    		for (int i = 0; i < fftLineBuf.length; i += step * decim, b++) {
-				var vr = FloatVector.fromArray(species, fftLineBuf, i + step * 0);
-    			for (int z = 1; z < decim; z++) {
-    				var vi = FloatVector.fromArray(species, fftLineBuf, i + step * z);
-        			vr = vr.max(vi);
-    			}
-    			
-    			this.simdFftBuf[b] = vr.reduceLanes(VectorOperators.MAX);
-    		}
-    		
-    		fftLineBuf = this.simdFftBuf;
-    		fftSize = b;
-    	}
     	
     	double searchCursor = (double) drawDataStart;
     	double searchStep = ((double) drawDataSize / waterfallWidth);
@@ -181,20 +157,6 @@ public class WaterfallPanel extends JPanel {
 				}
 				maxVal = vr.reduceLanes(VectorOperators.MAX);
 			}
-
-			/* // All of this masking is a bit slower than doing the rest scalarly, even with pre-cached masks.
-			int simdRest = searchEnd - searchStart;
-			if (simdRest > 0) { // unaligned (to species.length()) end of the search area
-				// searchStart -= species.length(); // we have incremented past the end of the search area, return back
-				// System.out.println((searchStart + simdRest - searchEnd) == simdEnd - searchEnd);
-				var mask = species.indexInRange(0, simdRest);
-				
-				var restMax = FloatVector.fromArray(species, fftLineBuf, searchStart, mask);//.reduceLanes(VectorOperators.MAX, mask);
-				vr = vr.lanewise(VectorOperators.MAX, restMax, mask);
-				// vr = restMax.max(vr);
-				// vr.max(restMax).
-				searchStart += simdRest;
-			} maxVal = vr.reduceLanes(VectorOperators.MAX);*/
 			
 			for (; searchStart < searchEnd; searchStart++) {
     			float curVal = fftLineBuf[searchStart];
@@ -203,17 +165,11 @@ public class WaterfallPanel extends JPanel {
     			}
     		}
 			
-    		
-    		// if (true) continue;
-      		float ampl = maxVal;
+       		float ampl = maxVal;
 			float pixel = (Math.clamp(ampl, waterfallMin, waterfallMax) - waterfallMin) / dataRange;
 
 			int paletteIdx = Math.clamp((int) (pixel * palette.length), 0, palette.length - 1);
 			imageData[yIdx + px] = /* px > waterfallWidth - 20 ? 0x00FF00 : */ palette[paletteIdx];
-			
-			/* int v = (int) (pixel * 255f) & 0xFF;
-			int col = v << 16 | v << 8 | v;
-			imageData[yIdx + px] = col; */ 
     	}
     }
     
@@ -238,7 +194,7 @@ public class WaterfallPanel extends JPanel {
     		drawFftLine(imageData, (currentLine + i) % this.fftData.length, raster.getHeight() - 1 - i);    		
     	}
     	long took = System.nanoTime() - t1;
-    	System.out.println("Full update took: " + (took / 1000000) + " ms");
+    	// System.out.println("Full update took: " + (took / 1000000) + " ms");
     	//repaint();
     }
     
@@ -272,14 +228,7 @@ public class WaterfallPanel extends JPanel {
         
         this.zoomFactor = factor;
         this.setViewOffset(this.offsetFactor);
-        
 
-        // Map 0.0 -> 1.0 to 1000.0 -> bandwidth
-        /* double wfBw = getBandwidth();
-        double delta = wfBw - 1000.0;
-        double finalBw = Math.min(1000.0 + (factor * delta), wfBw); 
-        setViewBandwidth(finalBw); */
-        
         doFullUpdate();
         
         repaint();
@@ -303,26 +252,6 @@ public class WaterfallPanel extends JPanel {
     public float getMaxValue() {
     	return this.waterfallMax;
     }
-    
-    /* public double getBandwidth() {
-    	return this.viewBandwidth;
-    }
-    
-    public void setBandwidth(double bandwidth) {
-    	this.viewBandwidth = bandwidth;
-    } */
-    
-    /* public void setViewBandwidth(double bandwidth) {
-    	this.viewBandwidth = bandwidth;
-    	this.viewZoom = calculateZoomLevelFromBw(viewBandwidth);
-    }
-    
-     public double calculateZoomLevelFromBw(double bw) {
-        double wfBw = getBandwidth();
-        double onCurve = (bw - 1000.0) / (wfBw - 1000.0);
-        double zoomLevel = Math.cbrt(onCurve);
-        return zoomLevel;
-    }*/
 
     @Override
     protected void paintComponent(Graphics g) {
@@ -330,17 +259,6 @@ public class WaterfallPanel extends JPanel {
 
         // Draw the buffered image
         g.drawImage(waterfallImage, 0, 0, null);
-    }
-
-    // Method to convert an FFT value to a color
-    private Color getColorForValue(float value) {
-        // Normalize the value to be between 0 and 1
-        float normalizedValue = Math.min(1.0f, Math.max(0.0f, value));
-
-        // Convert the normalized value to a color (e.g., from blue to red)
-        int blue = (int) (255 * (1 - normalizedValue));
-        int red = (int) (255 * normalizedValue);
-        return new Color(red, 0, blue);
     }
     
     public void updatePalette(int[] colors) {
