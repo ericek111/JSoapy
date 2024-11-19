@@ -2,23 +2,26 @@ package eu.lixko.jsoapy.gui;
 
 import java.awt.Dimension;
 import java.awt.Graphics;
+import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.DataBufferInt;
 import java.awt.image.WritableRaster;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.swing.JPanel;
 
 import eu.lixko.jsoapy.FFT;
-import eu.lixko.jsoapy.FFTTest;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
-public class WaterfallPanel extends JPanel {
+public class WaterfallPanel extends JPanel implements ComponentListener {
     private static final long serialVersionUID = 7474511002119759534L;
     
 	private BufferedImage waterfallImage; // BufferedImage to hold the waterfall data
@@ -33,6 +36,7 @@ public class WaterfallPanel extends JPanel {
     private Thread zoomWorker;
     protected final AtomicBoolean zoomWorkAvailable = new AtomicBoolean(false);
     protected final AtomicBoolean shuttingDown = new AtomicBoolean(false);
+    private ReentrantReadWriteLock resizingLock = new ReentrantReadWriteLock();
     
     protected double offsetFactor = 0.0;
     protected double viewBandwidth = 0.0; // actual bandwidth displayed
@@ -40,6 +44,7 @@ public class WaterfallPanel extends JPanel {
 	private double zoomFactor;
     
     public WaterfallPanel(int width, int height) {
+    	this.addComponentListener(this);
     	
         this.waterfallImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
@@ -49,7 +54,7 @@ public class WaterfallPanel extends JPanel {
         // Enable double buffering
         setDoubleBuffered(false);
         
-        fftData = new float[height][FFTTest.MAX_FFT_SIZE];
+        fftData = new float[height][4096];
         fftSizes = new int[fftData.length];
         
         this.updatePalette(new int[] { // classic
@@ -81,7 +86,13 @@ public class WaterfallPanel extends JPanel {
 	        	}
 	        	while (zoomWorkAvailable.get()) {
     				zoomWorkAvailable.set(false);
-    				doFullUpdateWork();
+    				
+    				resizingLock.readLock().lock();
+    				try {
+    					doFullUpdateWork();    					
+    				} finally {
+    					resizingLock.readLock().unlock();
+    				}    				
     			}
 	        }
         });
@@ -89,32 +100,41 @@ public class WaterfallPanel extends JPanel {
     }
 
     public void addLine(FFT fftGen) {
-		
-    	WritableRaster raster = waterfallImage.getRaster();
-    	DataBuffer rasterBuf = raster.getDataBuffer();
-    	int[] imageData = ((DataBufferInt) rasterBuf).getData();
-
-    	// raster.setPixels(0, 0, raster.getWidth(), raster.getHeight() - 1, raster.getPixels(0, 1, raster.getWidth(), raster.getHeight() - 1, (int[]) null));
-    	
-    	if (false) {
-    		// scroll upwards: 
-        	System.arraycopy(imageData, raster.getWidth(), imageData, 0, raster.getWidth() * (raster.getHeight() - 1));
-    	} else {
-    		// scroll downwards
-        	System.arraycopy(imageData, 0, imageData, raster.getWidth(), raster.getWidth() * (raster.getHeight() - 1));
-    	}
-    	
-    	final int fftSize = (int) fftGen.getSize();
-    	MemorySegment.copy(fftGen.fft_out, ValueLayout.JAVA_FLOAT, 0, this.fftData[currentLine], fftSize / 2, fftSize / 2);
-    	MemorySegment.copy(fftGen.fft_out, ValueLayout.JAVA_FLOAT, fftSize * Float.BYTES / 2, this.fftData[currentLine], 0, fftSize / 2);
-    	fftSizes[currentLine] = fftSize;
-    	drawFftLine(imageData, currentLine, 0);
-    	
-    	currentLine = (currentLine + 1) % this.fftData.length;
-    	
-    	repaint();
-    	
-    	// fftGen.setFftSize(FFTTest.MAX_FFT_SIZE / 1);
+    	resizingLock.readLock().lock();
+		try {
+	    	WritableRaster raster = waterfallImage.getRaster();
+	    	DataBuffer rasterBuf = raster.getDataBuffer();
+	    	int[] imageData = ((DataBufferInt) rasterBuf).getData();
+	
+	    	// raster.setPixels(0, 0, raster.getWidth(), raster.getHeight() - 1, raster.getPixels(0, 1, raster.getWidth(), raster.getHeight() - 1, (int[]) null));
+	    	
+	    	if (false) {
+	    		// scroll upwards: 
+	        	System.arraycopy(imageData, raster.getWidth(), imageData, 0, raster.getWidth() * (raster.getHeight() - 1));
+	    	} else {
+	    		// scroll downwards
+	        	System.arraycopy(imageData, 0, imageData, raster.getWidth(), raster.getWidth() * (raster.getHeight() - 1));
+	    	}
+	    	
+	    	final int fftSize = (int) fftGen.getSize();
+	    	currentLine %= this.fftData.length;
+	    	
+	    	// saving memory at the cost of extra allocations when changing the FFT size often.
+	    	if (this.fftData[currentLine].length != fftSize) {
+	    		this.fftData[currentLine] = new float[fftSize];
+	    	}
+	    	
+	    	MemorySegment.copy(fftGen.fft_out, ValueLayout.JAVA_FLOAT, 0, this.fftData[currentLine], fftSize / 2, fftSize / 2);
+	    	MemorySegment.copy(fftGen.fft_out, ValueLayout.JAVA_FLOAT, fftSize * Float.BYTES / 2, this.fftData[currentLine], 0, fftSize / 2);
+	    	fftSizes[currentLine] = fftSize;
+	    	drawFftLine(imageData, currentLine, 0);
+	    	
+	    	currentLine = (currentLine + 1) % this.fftData.length;
+	    	
+	    	repaint();
+		} finally {
+			resizingLock.readLock().unlock();
+		}
 	}
     
     private void drawFftLine(int imageData[], int fftIdx, int yPos) {
@@ -180,7 +200,7 @@ public class WaterfallPanel extends JPanel {
 		}
     }
     
-    public void doFullUpdateWork() {
+    private void doFullUpdateWork() {
     	WritableRaster raster = waterfallImage.getRaster();
     	DataBuffer rasterBuf = raster.getDataBuffer();
     	int[] imageData = ((DataBufferInt) rasterBuf).getData();
@@ -286,6 +306,40 @@ public class WaterfallPanel extends JPanel {
             }
     	}
     }
+
+	@Override
+	public void componentResized(ComponentEvent e) {
+		float[][] newData = Arrays.copyOf(this.fftData, this.getHeight());
+		for (int i = this.fftData.length; i < newData.length; i++) { // fill the new empty slots with float buffers
+			newData[i] = new float[fftSizes[currentLine]]; // the current line seems like a good starting point for the buffer size
+		}
+		
+		resizingLock.writeLock().lock();
+		try {
+			// TODO: We should shuffle the data in the buffers around according to currentLine, else there's initially a moving gap in the waterfall.
+			this.waterfallImage = new BufferedImage(this.getWidth(), this.getHeight(), this.waterfallImage.getType());
+			this.fftData = newData;
+			this.fftSizes = Arrays.copyOf(this.fftSizes, this.getHeight());
+			currentLine = Math.min(currentLine, this.fftData.length);
+		} finally {
+			resizingLock.writeLock().unlock();
+		}
+		
+		doFullUpdate();
+	}
+
+	@Override
+	public void componentMoved(ComponentEvent e) {		
+	}
+
+	@Override
+	public void componentShown(ComponentEvent e) {		
+	}
+
+	@Override
+	public void componentHidden(ComponentEvent e) {
+		
+	}
 
  
 }
