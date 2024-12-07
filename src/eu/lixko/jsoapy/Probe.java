@@ -2,7 +2,6 @@ package eu.lixko.jsoapy;
 
 import java.lang.foreign.Arena;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -12,7 +11,6 @@ import eu.lixko.jsoapy.soapy.SoapySDRDevice;
 import eu.lixko.jsoapy.soapy.SoapySDRDevice.NativeStreamFormat;
 import eu.lixko.jsoapy.util.NativeUtils;
 import eu.lixko.jsoapy.soapy.SoapySDRDeviceDirection;
-import eu.lixko.jsoapy.soapy.SoapySDRKwargs;
 import eu.lixko.jsoapy.soapy.SoapySDRRange;
 
 public class Probe {

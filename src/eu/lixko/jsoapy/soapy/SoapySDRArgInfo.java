@@ -2,7 +2,6 @@ package eu.lixko.jsoapy.soapy;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentAllocator;
-import java.lang.foreign.ValueLayout;
 import java.util.List;
 
 import eu.lixko.jsoapy.util.NativeUtils;

@@ -1,9 +1,6 @@
 package eu.lixko.jsoapy.soapy;
 
 import java.lang.foreign.MemorySegment;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.Map;
 
 import eu.lixko.jsoapy.util.NativeUtils;
 

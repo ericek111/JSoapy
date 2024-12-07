@@ -5,12 +5,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
-import java.nio.file.spi.FileSystemProvider;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 import eu.lixko.jsoapy.util.NativeUtils;
@@ -333,9 +328,10 @@ public class SoapySDRDevice {
 	}
 	
 	public List<SoapySDRArgInfo> getFrequencyArgsInfo(SoapySDRDeviceDirection direction, long channel, String name) {
-		try (Arena arena = Arena.ofConfined()) {
-			return NativeUtils.invokeGetStructs(lengthOut -> Device_h.SoapySDRDevice_getFrequencyArgsInfo(this.addr, direction.ordinal(), channel, lengthOut), item -> SoapySDRArgInfo.fromStruct(item), SoapySDRArgInfo_h.layout());
-		}
+		return NativeUtils.invokeGetStructs(
+			lengthOut -> Device_h.SoapySDRDevice_getFrequencyArgsInfo(this.addr, direction.ordinal(), channel, lengthOut),
+			item -> SoapySDRArgInfo.fromStruct(item), SoapySDRArgInfo_h.layout()
+		);
 	}
 	
 	// Sample Rate API
@@ -647,11 +643,8 @@ public class SoapySDRDevice {
 	// I2C API
 
 	public int writeI2C(int addr, byte[] data) {
-	    try (Arena arena = Arena.ofConfined()) {
-	    	// MemorySegment buf = arena.allocate(data.length);
-	    	MemorySegment buf = MemorySegment.ofArray(data);
-	        return Device_h.SoapySDRDevice_writeI2C(this.addr, addr, buf, data.length);
-	    }
+    	MemorySegment buf = MemorySegment.ofArray(data);
+        return Device_h.SoapySDRDevice_writeI2C(this.addr, addr, buf, data.length);
 	}
 
 	public byte[] readI2C(int addr) {
