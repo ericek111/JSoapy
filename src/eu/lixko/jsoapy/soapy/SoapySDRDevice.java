@@ -492,17 +492,17 @@ public class SoapySDRDevice {
 	    }
 	}
 
-	public List<String> listChannelSensors(int direction, long channel) {
+	public List<String> listSensors(int direction, long channel) {
 	    return NativeUtils.invokeGetStrArray(lengthOut -> (MemorySegment) Device_h.SoapySDRDevice_listChannelSensors(this.addr, direction, channel, lengthOut));
 	}
 
-	public SoapySDRArgInfo getChannelSensorInfo(SoapySDRDeviceDirection direction, long channel, String key) {
+	public SoapySDRArgInfo getSensorInfo(SoapySDRDeviceDirection direction, long channel, String key) {
 	    try (Arena arena = Arena.ofConfined()) {
 	        return SoapySDRArgInfo.fromStruct(Device_h.SoapySDRDevice_getChannelSensorInfo(arena, this.addr, direction.ordinal(), channel, arena.allocateFrom(key)));
 	    }
 	}
 
-	public String readChannelSensor(SoapySDRDeviceDirection direction, long channel, String key) {
+	public String readSensor(SoapySDRDeviceDirection direction, long channel, String key) {
 	    try (Arena arena = Arena.ofConfined()) {
 	        return NativeUtils.segmentToString(Device_h.SoapySDRDevice_readChannelSensor(this.addr, direction.ordinal(), channel, arena.allocateFrom(key)));
 	    }
