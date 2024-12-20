@@ -492,8 +492,8 @@ public class SoapySDRDevice {
 	    }
 	}
 
-	public List<String> listSensors(int direction, long channel) {
-	    return NativeUtils.invokeGetStrArray(lengthOut -> (MemorySegment) Device_h.SoapySDRDevice_listChannelSensors(this.addr, direction, channel, lengthOut));
+	public List<String> listSensors(SoapySDRDeviceDirection direction, long channel) {
+	    return NativeUtils.invokeGetStrArray(lengthOut -> (MemorySegment) Device_h.SoapySDRDevice_listChannelSensors(this.addr, direction.ordinal(), channel, lengthOut));
 	}
 
 	public SoapySDRArgInfo getSensorInfo(SoapySDRDeviceDirection direction, long channel, String key) {
