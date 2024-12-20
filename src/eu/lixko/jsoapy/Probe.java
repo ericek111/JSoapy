@@ -58,7 +58,8 @@ public class Probe {
 		
 		printList("Clock sources", dev.listClockSources());
 		printList("Time sources", dev.listTimeSources());
-		printList("Sensors", dev.listSensors());
+		printSensors(dev);
+		
 		printList("Registers", dev.listRegisterInterfaces());
 		List<SoapySDRArgInfo> settings = dev.getSettingInfo();
 		if (!settings.isEmpty()) {
@@ -138,7 +139,7 @@ public class Probe {
 		
 		log("Filter bandwidths: " + SoapySDRRange.rangeListToString(dev.getBandwidthRange(dir, chan), 1e6) + " MHz", 1);
 		
-		printList("Sensors", dev.listSensors());
+		printChannelSensors(dev, dir, chan);
 		
 		List<SoapySDRArgInfo> settings = dev.getSettingInfo(dir, chan);
 		if (!settings.isEmpty()) {
@@ -149,17 +150,66 @@ public class Probe {
 		}
 	}
 	
-	private void printArgInfo(SoapySDRArgInfo argInfo) {
-		String name = argInfo.name.isEmpty() ? argInfo.key : argInfo.name;
-		String label = " * " + name; 
+	private void printArgInfo(SoapySDRArgInfo info) {
+		String name = info.name.isEmpty() ? info.key : info.name;
+		String label = " * " + name;
 		
-		if (!argInfo.description.isEmpty()) {
-			label += " - " + argInfo.description;
+		if (!info.description.isEmpty()) {
+			label += " - " + info.description;
 		}
 		
 		log(label, 2);
 		
-		log(" " + argInfo.toString(), 3);
+		log(" " + info.toString(), 3);
+	}
+	
+	private void printChannelSensors(SoapySDRDevice dev, SoapySDRDeviceDirection dir, long channel) {
+		List<String> sensorList = dev.listSensors(dir, channel);
+		if (sensorList.isEmpty())
+			return;
+		
+		printList("Sensors", sensorList);
+        for (String sensorName : sensorList) {
+        	SoapySDRArgInfo info = dev.getSensorInfo(dir, channel, sensorName);
+        	printSensorInfo(sensorName, dev.readSensor(dir, channel, sensorName), info);
+        }
+	}
+	
+	private void printSensors(SoapySDRDevice dev) {
+		List<String> sensorList = dev.listSensors();
+		if (sensorList.isEmpty())
+			return;
+		
+		printList("Sensors", sensorList);
+        for (String sensorName : sensorList) {
+        	SoapySDRArgInfo info = dev.getSensorInfo(sensorName);
+        	printSensorInfo(sensorName, dev.readSensor(sensorName), info);
+        }
+	}
+	
+	private void printSensorInfo(String key, String reading, SoapySDRArgInfo info) {
+		String label = " * " + key;
+		if (!info.name.isEmpty()) {
+			label += " (" + info.name + ")";
+		}
+		label += ":";
+		if (info.range.getMaximum() > Double.MIN_VALUE) {
+			label += info.range.toString();
+		}
+		
+		label += String.join(", ", info.options);
+		label += " ";
+		
+		label += reading;
+		if (!info.units.isEmpty()) {
+			label += " " + info.units;
+		}
+		
+		log(label, 2);
+		
+		if (!info.description.isEmpty()) {
+			log(" " + info.description, 3);			
+		}
 		
 	}
 	
