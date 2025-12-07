@@ -53,10 +53,10 @@ public class SoapySDRStream implements AutoCloseable {
 		this.format = format;
 		if (channels == null) {
 			this.channels = List.of();
-			this.channelFormats = List.of(this.dev.getNativeStreamFromat(direction, 0));
+			this.channelFormats = List.of(this.dev.getNativeStreamFormat(direction, 0));
 		} else {
 			this.channels = Arrays.stream(channels).boxed().collect(Collectors.toUnmodifiableList());
-			this.channelFormats = Arrays.stream(channels).mapToObj(channel -> this.dev.getNativeStreamFromat(direction, channel)).collect(Collectors.toUnmodifiableList());
+			this.channelFormats = Arrays.stream(channels).mapToObj(channel -> this.dev.getNativeStreamFormat(direction, channel)).collect(Collectors.toUnmodifiableList());
 		}
 		
 		this.numChannels = channels != null ? channels.length : this.dev.getNumChannels(direction);

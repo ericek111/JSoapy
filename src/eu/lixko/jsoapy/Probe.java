@@ -96,7 +96,7 @@ public class Probe {
 		log("Supports AGC: " + (dev.hasGainMode(dir, chan) ? "YES" : "NO"), 1);
 		
 		printList("Stream formats", dev.getStreamFormats(dir, chan).stream().map(format -> format.name()).collect(Collectors.toList()));
-		NativeStreamFormat nativeFormat = dev.getNativeStreamFromat(dir, chan);
+		NativeStreamFormat nativeFormat = dev.getNativeStreamFormat(dir, chan);
 		log("Native format: " + nativeFormat.format() + " [full-scale=" + nativeFormat.fullScale() + "]", 1);
 		
 		List<SoapySDRArgInfo> streamArgs = dev.getStreamArgsInfo(dir, chan);

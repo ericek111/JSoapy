@@ -112,7 +112,7 @@ public class SoapySDRDevice {
 				.stream().map(str -> StreamFormat.valueOf(str)).collect(Collectors.toUnmodifiableList());
 	}
 	
-	public NativeStreamFormat getNativeStreamFromat(SoapySDRDeviceDirection direction, long channel) {
+	public NativeStreamFormat getNativeStreamFormat(SoapySDRDeviceDirection direction, long channel) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment fullScalePtr = arena.allocate(ValueLayout.JAVA_DOUBLE);
 			MemorySegment formatStrPtr = Device_h.SoapySDRDevice_getNativeStreamFormat(this.addr, direction.ordinal(), channel, fullScalePtr);
