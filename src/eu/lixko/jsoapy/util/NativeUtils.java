@@ -115,9 +115,13 @@ public class NativeUtils {
     }
 
     public static final String segmentToString(MemorySegment seg) {
+    	return segmentToString(seg, Integer.MAX_VALUE);
+    }
+    
+    public static final String segmentToString(MemorySegment seg, long maxSize) {
     	if (seg.address() == 0)
     		return null;
-    	return seg.reinterpret(Integer.MAX_VALUE).getString(0);
+    	return seg.reinterpret(maxSize).getString(0);
     }
     
     public static List<String> invokeGetStrArray(ApiMethodWithArrRet cb) {
