@@ -87,7 +87,8 @@ public class SoapySDRStream implements AutoCloseable {
 		}
 		this.ptr = ptr;
 		
-		this.setBlockSize(40000); // 1 MiB by default
+		long mtu = this.getStreamMTU();
+		this.setBlockSize(mtu > 0 ? mtu : 40000); // 1 MiB by default
 	}
 	
 	/**
@@ -140,6 +141,9 @@ public class SoapySDRStream implements AutoCloseable {
 		return this.args;
 	}
 	
+	/**
+	 * @return The input buffer size in samples.
+	 */
 	public long getBlockSize() {
 		return this.blockSize;
 	}
@@ -188,6 +192,11 @@ public class SoapySDRStream implements AutoCloseable {
 		this.closeStream();
 	}
 	
+	/**
+	 * Get the stream's maximum transmission unit (MTU) in number of elements.
+	 * 
+	 * @return the MTU in number of stream elements (never zero) 
+	 */
 	public long getStreamMTU() {
 		return Device_h.SoapySDRDevice_getStreamMTU(this.dev.getAddress(), this.ptr);
 	}
