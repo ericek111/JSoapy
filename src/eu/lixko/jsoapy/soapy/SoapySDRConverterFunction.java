@@ -12,9 +12,15 @@ import java.lang.foreign.*;
  * }
  */
 public class SoapySDRConverterFunction {
-
-    SoapySDRConverterFunction() {
-        // Should not be called directly
+	
+	protected final MemorySegment addr;
+	
+    protected SoapySDRConverterFunction(MemorySegment addr) {
+    	this.addr = addr;
+    }
+    
+    public MemorySegment getAddress() {
+    	return this.addr;
     }
 
     public interface Function {
@@ -40,13 +46,21 @@ public class SoapySDRConverterFunction {
     }
 
     private static final MethodHandle DOWN$MH = Linker.nativeLinker().downcallHandle($DESC);
+    
+    public void invoke(MemorySegment inputPointer, MemorySegment outputPointer, long numElements, double optScalar) {
+    	invoke(this.addr, inputPointer, outputPointer, numElements, optScalar);
+    }
 
     public static void invoke(MemorySegment funcPtr, MemorySegment inputPointer, MemorySegment outputPointer, long numElements, double optScalar) {
         try {
-             DOWN$MH.invokeExact(funcPtr, inputPointer, outputPointer, numElements, optScalar);
+             DOWN$MH.invokeExact(funcPtr, inputPointer.address(), outputPointer.address(), numElements, optScalar);
         } catch (Throwable ex$) {
             throw new AssertionError("should not reach here", ex$);
         }
+    }
+    
+    public void invokeLongs(long inputPointer, long outputPointer, long numElements, double optScalar) {
+    	invokeLongs(this.addr, inputPointer, outputPointer, numElements, optScalar);
     }
     
     public static void invokeLongs(MemorySegment funcPtr, long inputPointer, long outputPointer, long numElements, double optScalar) {
